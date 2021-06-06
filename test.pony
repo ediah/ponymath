@@ -1,6 +1,6 @@
 actor Main
   new create(env: Env) =>
-    var n: USize = 40
+    var n: USize = 300
     var mtx1 = Matrix(n, n).init(200, 1)
     var mtx2 = Matrix(n, n).init(4000, 1)
 
@@ -9,4 +9,4 @@ actor Main
 
     var mtx3 = mtx1 * mtx2
 
-    env.out.print(mtx3.string())
+    //env.out.print(mtx3.string())

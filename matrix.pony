@@ -108,9 +108,8 @@ class Matrix
     end
     false
 
-  fun mul(y: Matrix): Matrix =>
+  fun mul_actors(yT: Matrix): Matrix =>
     let threads: USize = 2
-    var yT = y.transpose()
     var c = Matrix(m, yT.m).initzero()
     var sem = Matrix(1, threads - 1).initzero()
     var marray = Array[MatrixActor](threads - 1)
@@ -153,6 +152,9 @@ class Matrix
 
   fun dummy() =>
     None
+
+  fun mul(y: Matrix): Matrix =>
+    this.mul_actors(y.transpose())
 
 actor MatrixActor
   var a: Pointer[F64] tag

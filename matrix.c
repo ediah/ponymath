@@ -61,7 +61,7 @@ double * aligned_copy(double * src, size_t n) {
 
 extern void mtxmulpar
 (double* a, double* b, double* c, int m, int n, int k,
- int l, int threads)
+ int l, int threads, double * sem)
 {
     int block = m * k / threads;
     int shift = block * (l - 1);
@@ -108,9 +108,7 @@ extern void mtxmulpar
         #endif
     }
 
+    sem[l - 1] = 1;
     free(a);
     free(b);
 }
-//clang -fprofile-instr-generate a.c && LLVM_PROFILE_FILE=a.profraw ./a.out
-//llvm-profdata merge -output=a.profdata a.profraw
-//clang -fprofile-instr-use=a.profdata a.c

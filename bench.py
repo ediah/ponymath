@@ -3,7 +3,7 @@
 import os, time
 
 TIMES = 5
-SIZE = 1000
+SIZE = 300
 
 ponyflags =  " --ponyminthreads 2 --ponysuspendthreshold 1000"
 ponyflags += " --ponynoyield --ponynoblock --ponypin"
@@ -13,10 +13,10 @@ maxt = 0
 mint = 0
 i = 0
 while i < TIMES:
-    a = time.clock_gettime_ns(time.CLOCK_PROCESS_CPUTIME_ID)
+    a = time.time_ns()
     r = os.system("./cmatrix" + ponyflags)
-    b = time.clock_gettime_ns(time.CLOCK_PROCESS_CPUTIME_ID)
-    elapsed = round((b - a) / 1000)
+    b = time.time_ns()
+    elapsed = round((b - a) / 10 ** 6)
 
     if r == 0:
         print("#" + str(i+1) + " lap: " + str(elapsed) + " ms elapsed")
