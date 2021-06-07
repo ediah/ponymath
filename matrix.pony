@@ -1,56 +1,68 @@
 use "lib:matrix"
-use @mtxmul[Pointer[F64] ref](a: Pointer[F64] tag, b: Pointer[F64] tag,
-                  m: USize tag, n: USize tag, k: USize tag)
-use @mtxmulpar[None](a: Pointer[F64] tag, b: Pointer[F64] tag,
-    c: Pointer[F64] tag, m: USize tag, n: USize tag, k: USize tag,
-    i: USize tag, threads: USize tag, semaphore: Pointer[F64] tag)
+
+// Matrix multiplication
+use @mtxmul[Pointer[F64] ref](
+  a: Pointer[F64] tag, // Left matrix
+  b: Pointer[F64] tag, // Right matrix (transposed)
+  m: USize tag,        // Rows in left matrix
+  n: USize tag,        // Columns in left matrix
+  k: USize tag         // Rows in transposed right matrix
+)
+
+// Make matrix data be aligned
+use @realign[Pointer[F64] ref](p: Pointer[F64] tag, size: USize tag)
+use @fuck[None](i: USize)
+use @fuckp[None](p: Pointer[F64] tag)
 
 use "collections"
 use "random"
+use "time"
 
 class Matrix
-  let m: USize
-  let n: USize
+  let _m: USize
+  let _n: USize
+  let _size: USize
   var data: Array[F64]
+  var _aligned: Bool = false
+  var _collected: Bool = false
 
   new create(m': USize, n': USize) =>
-    m = m'
-    n = n'
-    data = Array[F64](m * n)
+    _m = m'
+    _n = n'
+    _size = m' * n'
+    data = Array[F64](_size)
+
+  fun size(): USize =>
+    _size
 
   fun ref init(seed: U64, max: F64): Matrix =>
     var random = Rand(seed)
     random.real() // skip first number
-    for i in Range(0, m * n) do
+    for i in Range(0, _size) do
       data.push(random.real() * max)
     end
     this
-/*
-  fun string(): String =>
-    var str = "Matrix[" + m.string() + " x " + n.string() + "]\n"
 
-    for i in Range(0, m) do
-      for j in Range(0, n - 1) do
-        str.append(this(i, j).string() + ", ")
-      end
-      str.append(this(i, n).string() + "\n")
-    end
-    str
-*/
+  fun ref update(i: USize, value: F64) =>
+    try data.update(i, value)? end
 
   fun string(): String =>
-    var str = "Matrix[" + m.string() + "x" + n.string() + "]\n"
+    """
+    This function gives matrix representation which
+    is suitable for copy-pasting it in Wolfram Alpha
+    """
+    var str = "Matrix[" + _m.string() + "x" + _n.string() + "]\n"
     let dv = data.values()
     str.append("{")
-    for i in Range(0, m - 1) do
+    for i in Range(0, _m - 1) do
       str.append("{")
-      for j in Range(0, n - 1) do
+      for j in Range(0, _n - 1) do
         try str.append(dv.next()?.string() + ", ") end
       end
       try str.append(dv.next()?.string() + "},\n") end
     end
     str.append("{")
-    for j in Range(0, n - 1) do
+    for j in Range(0, _n - 1) do
       try str.append(dv.next()?.string() + ", ") end
     end
     try str.append(dv.next()?.string() + "}") end
@@ -58,15 +70,14 @@ class Matrix
     str
 
   fun apply(i: USize, j: USize): F64 =>
-    try data((i * n) + j)? else F64(0) end
-    //F64.from[USize](data.size())
+    try data((i * _n) + j)? else F64(0) end
 
   fun mul_naive(y: Matrix): Matrix =>
-    var result = Matrix(m, y.n)
+    var result = Matrix(_m, y._n)
     var sum: F64 = 0
-    for i in Range(0, m) do
-      for j in Range(0, y.n) do
-        for k in Range(0, n) do
+    for i in Range(0, _m) do
+      for j in Range(0, y._n) do
+        for k in Range(0, _n) do
           sum = sum + (this(i, k) * y(k, j))
         end
         result.data.push(sum)
@@ -76,109 +87,180 @@ class Matrix
     result
 
   fun transpose(): Matrix =>
-    var res = Matrix(m, n)
-    for i in Range(0, m) do
-      for j in Range(0, n) do
+    var res = Matrix(_n, _m)
+    for i in Range(0, _m) do
+      for j in Range(0, _n) do
         res.data.push(this(j, i))
       end
     end
     res
 
+  fun copy(): Matrix =>
+    var res = Matrix(_n, _m)
+    for i in Range(0, _m) do
+      for j in Range(0, _n) do
+        res.data.push(this(i, j))
+      end
+    end
+    res
+
   fun mul_transposed(yT: Matrix): Matrix =>
-    var c = Matrix(m, yT.m)
-    var cpoint = @mtxmul(this.data.cpointer(),
-                           yT.data.cpointer(),
-                         this.m, this.n, yT.m)
-    c.data = Array[F64].from_cpointer(cpoint, m * yT.m)
+    var c = Matrix(_m, yT._m)
+    var cpoint = @mtxmul(
+      this.data.cpointer(), // A
+      yT.data.cpointer(),   // B
+      _m,    // A rows
+      _n,    // A columns
+      yT._m  // B rows
+    )
+    c.data = Array[F64].from_cpointer(cpoint, yT._size)
     c
 
   fun ref initzero(): Matrix =>
-    for i in Range(0, m * n) do
+    for i in Range(0, _size) do
       data.push(0)
     end
     this
 
-  fun iszero(): Bool =>
-    for i in Range(0, m) do
-      for j in Range(0, n) do
-        if this(i, j) == 0 then
-          return true
-        end
+  fun slice(from: USize, to: USize): Matrix =>
+    """
+    Make slice of matrix by rows including "to"
+    """
+    // Check for negative size?
+    var res = Matrix(to - from, _n)
+    for i in Range(from, to + 1) do
+      for j in Range(0, _n) do
+        res.data.push(this(i, j))
       end
     end
-    false
+    res
 
-  fun mul_actors(yT: Matrix): Matrix =>
-    let threads: USize = 2
-    var c = Matrix(m, yT.m).initzero()
-    var sem = Matrix(1, threads - 1).initzero()
-    var marray = Array[MatrixActor](threads - 1)
-    for i in Range(1, threads) do
-      marray.push(MatrixActor(
-        this.data.cpointer(), // Указатель на начало A
-        yT.data.cpointer(),   // Указатель на начало B
-        c.data.cpointer(),    // Указатель на начало C
-        this.m,               // Кол-во строк A
-        this.n,               // Кол-во столбцов A = кол-во строк B
-        yT.m,                 // Кол-во столбцов B
-        i,                    // Номер части
-        threads,              // Сколько всего частей
-        sem.data.cpointer()   // Семафор
-        ))
+  fun sliceT(from: USize, to: USize): Matrix =>
+    """
+    Make slice of matrix by columns including "to"
+    and transpose it
+    """
+    // Check for negative size?
+    var res = Matrix(to - from, _m)
+    for i in Range(from, to + 1) do
+      for j in Range(0, _m) do
+        res.data.push(this(j, i))
+      end
+    end
+    res
+
+  fun ref realign(): Matrix =>
+    data.from_cpointer(
+      @realign(data.cpointer(), _size),
+      _size
+    )
+    _aligned = true
+    this
+
+  fun ref mul_actors(y: Matrix): Matrix =>
+    let cores: USize = 2
+    var res: Matrix iso^ = recover res.create(_m, y._n).initzero() end
+
+    if not _aligned then
+      realign()
     end
 
-    for i in Range(1, threads + 1) do
-      try marray(i - 1)?.multiplier() end
-    end
+    var block: USize = y._n / cores
+    var collector = MatrixCollector(res)
+    var workers = Array[MatrixActor](cores)
 
-    @mtxmulpar(
-      this.data.cpointer(), // Указатель на начало A
-      yT.data.cpointer(),   // Указатель на начало B
-      c.data.cpointer(),    // Указатель на начало C
-      this.m,               // Кол-во строк A
-      this.n,               // Кол-во столбцов A = кол-во строк B
-      yT.m,                 // Кол-во столбцов B
-      threads,              // Номер части
-      threads,              // Сколько всего частей
-      sem.data.cpointer()   // Семафор
+    for i in Range(0, cores) do
+      var k: USize = block
+      if i == (cores - 1) then
+        k = block + (y._n %% cores)
+      end
+      var from: USize = block * i
+      var worker = MatrixActor(
+        copy().data.cpointer(),
+        y.sliceT(from, from + k)
+         .realign()
+         .data.cpointer(),
+        _m, _n, k,
+        collector
       )
-
-    while sem.iszero() do
-      dummy()
+      collector.add(worker, from * _m)
+      workers.push(worker)
     end
 
-    c
+    for i in Range(0, cores) do
+      try workers(i)?.multiplier() end
+    end
+
+    _wait_for_collection(collector, res)
+
+    res
 
 
-  fun dummy() =>
-    None
+  fun ref collection_done() =>
+    _collected = true
 
-  fun mul(y: Matrix): Matrix =>
-    this.mul_actors(y.transpose())
+  fun _wait_for_collection(collector: MatrixCollector, target: Matrix iso^) =>
+    while not target._collected do
+      collector.answer(target)
+    end
+
+  fun ref mul(y: Matrix): Matrix =>
+    this.mul_actors(y)
+
+  new from_array(arr: Array[F64], m: USize, n: USize) =>
+    data = arr
+    _m = m
+    _n = n
+    _size = m * n
+
+actor MatrixCollector
+  var _workers: Array[MatrixActor] = _workers.create()
+  var _shifts: Array[USize] = _shifts.create()
+  let _result: Matrix iso
+
+  new create(result: Matrix iso^) =>
+    _result = result
+
+  be add(worker: MatrixActor, shift: USize) =>
+    _workers.push(worker)
+    _shifts.push(shift)
+
+  be collect(worker: MatrixActor, p: Pointer[F64] iso^, m: USize, n: USize) =>
+    var arr: Array[F64] = arr.from_cpointer(p, m * n)
+
+    try
+      var nworker = _workers.find(worker)?
+      for i in Range(0, m * n) do
+        _result(_shifts(nworker)? + i) = arr(i)?
+      end
+
+      _workers.delete(nworker)?
+      _shifts.delete(nworker)?
+    end
+
+  be answer(done: Matrix iso) =>
+    if _workers.size() == 0 then
+      done.collection_done()
+    end
 
 actor MatrixActor
-  var a: Pointer[F64] tag
-  var b: Pointer[F64] tag
-  var c: Pointer[F64] tag
-  var m: USize tag
-  var n: USize tag
-  var k: USize tag
-  var i: USize tag
-  var threads: USize tag
-  var semaphore: Pointer[F64] tag
+  var _a: Pointer[F64] tag // A matrix, left
+  var _b: Pointer[F64] tag // B matrix, right
+  var _m: USize val // A rows
+  var _n: USize val // A columns
+  var _k: USize val // B columns if it's not transposed
+  let _collector: MatrixCollector
 
-  new create(a': Pointer[F64] tag, b': Pointer[F64] tag, c': Pointer[F64] tag,
-             m': USize tag, n': USize tag, k': USize tag, i': USize tag,
-             threads': USize tag, semaphore': Pointer[F64] tag) =>
-    a = a'
-    b = b'
-    c = c'
-    m = m'
-    n = n'
-    k = k'
-    i = i'
-    threads = threads'
-    semaphore = semaphore'
+  new create(a': Pointer[F64] tag, b': Pointer[F64] tag,
+             m': USize val, n': USize val, k': USize val,
+             collector: MatrixCollector) =>
+    _a = a'
+    _b = b'
+    _m = m'
+    _n = n'
+    _k = k'
+    _collector = collector
 
   be multiplier() =>
-    @mtxmulpar(a, b, c, m, n, k, i, threads, semaphore)
+    var point: Pointer[F64] iso^ = recover @mtxmul(_a, _b, _m, _n, _k) end
+    _collector.collect(this, point, _m, _k)
