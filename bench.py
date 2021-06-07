@@ -3,10 +3,9 @@
 import os, time
 
 TIMES = 5
-SIZE = 300
+SIZE = 2000
 
-ponyflags =  " --ponyminthreads 2 --ponysuspendthreshold 1000"
-ponyflags += " --ponynoyield --ponynoblock --ponypin"
+ponyflags =  " --ponyminthreads 2"
 
 sum = 0
 maxt = 0

@@ -9,16 +9,22 @@
 #endif
 
 void debug_int(int x) {
+    #ifdef DEBUG
     printf("debug\t%d\n", x);
+    #endif
 }
 
 void debug_point(double * p) {
+    #ifdef DEBUG
     printf("debug\t%p\n", p);
+    #endif
 }
 
 extern double * mtxmul (double* a, double* b, int m, int n, int k)
 {
+    #ifdef DEBUG
     printf("multiplying\n");
+    #endif
     double * c = calloc(m * k, sizeof(double));
 
     #ifdef AVX
@@ -58,7 +64,10 @@ extern double * mtxmul (double* a, double* b, int m, int n, int k)
             #endif
         }
     }
+    #ifdef DEBUG
     printf("done\n");
+    #endif
+
     return c;
 }
 

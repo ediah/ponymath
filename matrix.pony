@@ -25,6 +25,7 @@ class Matrix
   var data: Array[F64]
   var _aligned: Bool = false
   var _collected: Bool = false
+  var _synced: Bool = false
 
   new create(m': USize, n': USize) =>
     _m = m'
@@ -166,14 +167,11 @@ class Matrix
     end
 
     var block: USize = y._n / cores
-    var collector = MatrixCollector(res)
+    var collector = MatrixCollector(res, cores)
     var workers = Array[MatrixActor](cores)
+    var k: USize = block
 
-    for i in Range(0, cores) do
-      var k: USize = block
-      if i == (cores - 1) then
-        k = block + (y._n %% cores)
-      end
+    for i in Range(0, cores - 1) do
       var from: USize = block * i
       var worker = MatrixActor(
         copy().data.cpointer(),
@@ -187,21 +185,35 @@ class Matrix
       workers.push(worker)
     end
 
-    for i in Range(0, cores) do
+    for i in Range(0, cores - 1) do
       try workers(i)?.multiplier() end
+    end
+
+    k = block + (y._n %% cores)
+    var point: Pointer[F64] = @mtxmul(
+      data.cpointer(),
+      y.sliceT(block * (cores - 1), y._n)
+       .realign().data.cpointer(),
+       _m, _n, k
+    )
+
+    try
+      var arr = Array[F64].from_cpointer(point, _m * k)
+      for i in Range(0, _m * k) do
+        this((block * (cores - 1)) + i) = arr(i)?
+      end
     end
 
     _wait_for_collection(collector, res)
 
     res
 
-
   fun ref collection_done() =>
     _collected = true
 
   fun _wait_for_collection(collector: MatrixCollector, target: Matrix iso^) =>
     while not target._collected do
-      collector.answer(target)
+      collector.answer({()(done = target) => done.collection_done()})
     end
 
   fun ref mul(y: Matrix): Matrix =>
@@ -217,9 +229,11 @@ actor MatrixCollector
   var _workers: Array[MatrixActor] = _workers.create()
   var _shifts: Array[USize] = _shifts.create()
   let _result: Matrix iso
+  let _cores: USize
 
-  new create(result: Matrix iso^) =>
+  new create(result: Matrix iso^, cores: USize) =>
     _result = result
+    _cores = cores
 
   be add(worker: MatrixActor, shift: USize) =>
     _workers.push(worker)
@@ -230,17 +244,18 @@ actor MatrixCollector
 
     try
       var nworker = _workers.find(worker)?
+
       for i in Range(0, m * n) do
         _result(_shifts(nworker)? + i) = arr(i)?
       end
 
-      _workers.delete(nworker)?
       _shifts.delete(nworker)?
+      _workers.delete(nworker)?
     end
 
-  be answer(done: Matrix iso) =>
+  be answer(callback: {ref (): None} iso) =>
     if _workers.size() == 0 then
-      done.collection_done()
+      callback()
     end
 
 actor MatrixActor
