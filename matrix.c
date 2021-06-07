@@ -8,12 +8,12 @@
 #include <immintrin.h>
 #endif
 
-void fuck(int x) {
-    printf("fuck\t%d\n", x);
+void debug_int(int x) {
+    printf("debug\t%d\n", x);
 }
 
-void fuckp(double * p) {
-    printf("fuck\t%p\n", p);
+void debug_point(double * p) {
+    printf("debug\t%p\n", p);
 }
 
 extern double * mtxmul (double* a, double* b, int m, int n, int k)

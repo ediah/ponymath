@@ -11,8 +11,8 @@ use @mtxmul[Pointer[F64] ref](
 
 // Make matrix data be aligned
 use @realign[Pointer[F64] ref](p: Pointer[F64] tag, size: USize tag)
-use @fuck[None](i: USize)
-use @fuckp[None](p: Pointer[F64] tag)
+use @debug_int[None](i: USize)
+use @debug_point[None](p: Pointer[F64] tag)
 
 use "collections"
 use "random"
