@@ -13,13 +13,12 @@ mint = 0
 i = 0
 while i < TIMES:
     a = time.time_ns()
-    r = os.system("./cmatrix" + ponyflags)
+    r = os.system("./ponymath" + ponyflags)
     b = time.time_ns()
     elapsed = round((b - a) / 10 ** 6)
 
     if r == 0:
         print("#" + str(i+1) + " lap: " + str(elapsed) + " ms elapsed")
-        i += 1
         sum += elapsed
         if maxt < elapsed:
             maxt = elapsed
@@ -27,6 +26,8 @@ while i < TIMES:
             mint = elapsed
     else:
         print("killed")
+    
+    i += 1
 
 av = round(sum / TIMES)
 print("min " + str(mint) + " ms\tav " + str(av) + " ms\tmax " + str(maxt) + " ms")

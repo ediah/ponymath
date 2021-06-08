@@ -20,6 +20,12 @@ void debug_point(double * p) {
     #endif
 }
 
+double * realign(double * src, size_t n) {
+    double * dst = _mm_malloc(n * sizeof(double), 32);
+    memcpy(dst, src, n * sizeof(double));
+    return dst;
+}
+
 extern double * mtxmul (double* a, double* b, int m, int n, int k)
 {
     #ifdef DEBUG
@@ -28,9 +34,10 @@ extern double * mtxmul (double* a, double* b, int m, int n, int k)
     double * c = calloc(m * k, sizeof(double));
 
     #ifdef AVX
-    double * prod = _mm_malloc(4*sizeof(double), 256);
+    double * prod = _mm_malloc(4 * sizeof(double), 32);
 
-    __m256d *p1, *p2, v1, v2;
+    const double *p1, *p2;
+    __m256d v1, v2;
     int M = n - (n % 4);
     #endif
 
@@ -38,15 +45,18 @@ extern double * mtxmul (double* a, double* b, int m, int n, int k)
         for (int j = 0; j < k; j++) {
             c[i * k + j] = 0;
             #ifdef AVX
-            p1 = (__m256d*) &(a[i * n]);
-            p2 = (__m256d*) &(b[j * n]);
+            p1 = &(a[i * n]);
+            p2 = &(b[j * n]);
             v1 = _mm256_setzero_pd();
 
             for (int run = 0; run < M; run += 4) {
-                v2 = _mm256_mul_pd(*p1, *p2);
+                v2 = _mm256_mul_pd(
+                    _mm256_loadu_pd(p1),
+                    _mm256_loadu_pd(p2)
+                );
                 v1 = _mm256_add_pd(v1, v2);
-                p1++;
-                p2++;
+                p1 += 4;
+                p2 += 4;
             }
             _mm256_store_pd(prod, v1);
 
@@ -64,15 +74,14 @@ extern double * mtxmul (double* a, double* b, int m, int n, int k)
             #endif
         }
     }
+
     #ifdef DEBUG
     printf("done\n");
     #endif
 
-    return c;
-}
+    #ifdef AVX
+    free(prod);
+    #endif
 
-double * realign(double * src, size_t n) {
-    double * dst = aligned_alloc(256, n * sizeof(double));
-    memcpy(dst, src, n * sizeof(double));
-    return dst;
+    return c;
 }

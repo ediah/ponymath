@@ -26,6 +26,7 @@ class Matrix
   var _aligned: Bool = false
   var _collected: Bool = false
   var _synced: Bool = false
+  let _eps: F64 = 0.000001
 
   new create(m': USize, n': USize) =>
     _m = m'
@@ -45,9 +46,9 @@ class Matrix
     this
 
   fun ref update(i: USize, value: F64) =>
-    try data.update(i, value)? end
+    try data.update(i, value)? else @debug_int(1010) end
 
-  fun string(): String =>
+  fun string(): String iso^ =>
     """
     This function gives matrix representation which
     is suitable for copy-pasting it in Wolfram Alpha
@@ -89,8 +90,8 @@ class Matrix
 
   fun transpose(): Matrix =>
     var res = Matrix(_n, _m)
-    for i in Range(0, _m) do
-      for j in Range(0, _n) do
+    for i in Range(0, _n) do
+      for j in Range(0, _m) do
         res.data.push(this(j, i))
       end
     end
@@ -161,12 +162,9 @@ class Matrix
   fun ref mul_actors(y: Matrix): Matrix =>
     let cores: USize = 2
     var res: Matrix iso^ = recover res.create(_m, y._n).initzero() end
+    var yT = y.transpose()
 
-    if not _aligned then
-      realign()
-    end
-
-    var block: USize = y._n / cores
+    var block: USize = _m / cores
     var collector = MatrixCollector(res, cores)
     var workers = Array[MatrixActor](cores)
     var k: USize = block
@@ -174,14 +172,13 @@ class Matrix
     for i in Range(0, cores - 1) do
       var from: USize = block * i
       var worker = MatrixActor(
-        copy().data.cpointer(),
-        y.sliceT(from, from + k)
-         .realign()
+        slice(from, from + k)
          .data.cpointer(),
-        _m, _n, k,
+        yT.data.cpointer(),
+        k, _n, yT._m,
         collector
       )
-      collector.add(worker, from * _m)
+      collector.add(worker, from * yT._m)
       workers.push(worker)
     end
 
@@ -189,18 +186,19 @@ class Matrix
       try workers(i)?.multiplier() end
     end
 
-    k = block + (y._n %% cores)
+    k = block + (_m %% cores)
     var point: Pointer[F64] = @mtxmul(
-      data.cpointer(),
-      y.sliceT(block * (cores - 1), y._n)
-       .realign().data.cpointer(),
-       _m, _n, k
+      slice(block * (cores - 1), _m)
+      .data.cpointer(),
+      yT.data.cpointer(),
+      k, _n, yT._m
     )
 
     try
-      var arr = Array[F64].from_cpointer(point, _m * k)
-      for i in Range(0, _m * k) do
-        this((block * (cores - 1)) + i) = arr(i)?
+      var arr = Array[F64].from_cpointer(point, k * yT._m)
+      var shift = (res._n * block) * (cores - 1)
+      for i in Range(0, k * yT._m) do
+        res(shift + i) = arr(i)?
       end
     end
 
@@ -218,6 +216,25 @@ class Matrix
 
   fun ref mul(y: Matrix): Matrix =>
     this.mul_actors(y)
+
+  fun box eq(y: Matrix box): Bool val =>
+    if (this._m != y._m) or (this._n != y._n) then
+      return false
+    end
+    for i in Range(0, _m) do
+      for j in Range(0, _n) do
+        if (this(i, j) - y(i, j)) > _eps then
+          return false
+        end
+      end
+    end
+    true
+
+  fun box ne(y: Matrix box): Bool val =>
+    not (this == y)
+
+  fun ref test_mul(y: Matrix): Bool =>
+    this.mul_naive(y) == this.mul(y)
 
   new from_array(arr: Array[F64], m: USize, n: USize) =>
     data = arr
@@ -244,7 +261,6 @@ actor MatrixCollector
 
     try
       var nworker = _workers.find(worker)?
-
       for i in Range(0, m * n) do
         _result(_shifts(nworker)? + i) = arr(i)?
       end
