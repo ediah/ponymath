@@ -1,4 +1,4 @@
-VPATH = ./ ./test ./matrix
+VPATH = ./ ./optional ./matrix
 LIBPATH=${shell pwd}/bin
 
 DEBUG=NO
@@ -11,25 +11,26 @@ else
 	PONYCFLAGS=
 endif
 
+PONYSRC=./matrix/matrix.pony
 
-default: matrix.c matrix.pony
-	@cp ./optional/main.pony ./
+default: matrix/*
+	@cp ./optional/main.pony ${PONYSRC} ./
 	@make libs -s
 	@make ponymath -s
-	@rm ./main.pony
+	@rm main.pony ${notdir ${PONYSRC}}
 
-test: matrix.c matrix.pony
-	@cp ./optional/_test.pony ./
+test: matrix/*
+	@cp ./optional/_test.pony ${PONYSRC} ./
 	@make libs -s
 	@make ponymath -s
-	@rm ./_test.pony
+	@rm ./_test.pony ${notdir ${PONYSRC}}
 
-libs: matrix.c
-	@clang -o ${LIBPATH}/matrix.o -c matrix.c ${CLANGFLAGS}
+libs: matrix/matrix.c
+	@clang -o ${LIBPATH}/matrix.o -c matrix/matrix.c ${CLANGFLAGS}
 	@ar rcs ${LIBPATH}/libmatrix.a ${LIBPATH}/matrix.o
 
-ponymath: matrix.pony optional/main.pony optional/_test.pony
-	@ponyc ${PONYCFLAGS} --path=${LIBPATH} --bin-name $@
+ponymath: ${PONYSRC} optional/*
+	@ponyc ${PONYCFLAGS} --path=${LIBPATH}
 
 .PHONY: clean
 clean:

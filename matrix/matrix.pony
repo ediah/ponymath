@@ -217,7 +217,7 @@ class Matrix
     res
 
   fun ref mul(y: Matrix): Matrix =>
-    this.mul_transposed(y)
+    this.mul_actors(y)
 
   /* Logic functions
    */
