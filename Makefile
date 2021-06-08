@@ -4,10 +4,10 @@ LIBPATH=${shell pwd}/bin
 DEBUG=NO
 
 ifeq (${DEBUG},YES)
-	CLANGFLAGS=-DAVX -march=native -O0 -g -DDEBUG
+	CLANGFLAGS=-DAVX2 -march=native -O0 -g -DDEBUG
 	PONYCFLAGS=--debug
 else
-	CLANGFLAGS=-DAVX -march=native -O3
+	CLANGFLAGS=-DAVX2 -march=native -O3
 	PONYCFLAGS=
 endif
 

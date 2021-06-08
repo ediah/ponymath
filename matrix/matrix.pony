@@ -19,14 +19,12 @@ use "random"
 use "time"
 
 class Matrix
-  let _m: USize
-  let _n: USize
-  let _size: USize
-  var data: Array[F64]
-  var _aligned: Bool = false
-  var _collected: Bool = false
-  var _synced: Bool = false
-  let _eps: F64 = 0.000001
+  let _m: USize                 // Rows num
+  let _n: USize                 // Columns num
+  let _size: USize              // Elements num
+  var data: Array[F64]          // Data
+  var _collected: Bool = false  // Is it collected from actors
+  let _eps: F64 = 0.000001      // Trust interval for approximations
 
   new create(m': USize, n': USize) =>
     _m = m'
@@ -34,19 +32,22 @@ class Matrix
     _size = m' * n'
     data = Array[F64](_size)
 
+  new from_array(arr: Array[F64], m: USize, n: USize) =>
+    data = arr
+    _m = m
+    _n = n
+    _size = m * n
+
+  /* Standard functions
+   */
   fun size(): USize =>
     _size
 
-  fun ref init(seed: U64, max: F64): Matrix =>
-    var random = Rand(seed)
-    random.real() // skip first number
-    for i in Range(0, _size) do
-      data.push(random.real() * max)
-    end
-    this
+  fun apply(i: USize, j: USize): F64 =>
+    try data((i * _n) + j)? else F64(0) end
 
   fun ref update(i: USize, value: F64) =>
-    try data.update(i, value)? else @debug_int(1010) end
+    try data.update(i, value)? end
 
   fun string(): String iso^ =>
     """
@@ -71,31 +72,19 @@ class Matrix
     str.append("}")
     str
 
-  fun apply(i: USize, j: USize): F64 =>
-    try data((i * _n) + j)? else F64(0) end
-
-  fun mul_naive(y: Matrix): Matrix =>
-    var result = Matrix(_m, y._n)
-    var sum: F64 = 0
-    for i in Range(0, _m) do
-      for j in Range(0, y._n) do
-        for k in Range(0, _n) do
-          sum = sum + (this(i, k) * y(k, j))
-        end
-        result.data.push(sum)
-        sum = 0
-      end
+  fun ref init(seed: U64, max: F64): Matrix =>
+    var random = Rand(seed)
+    random.real() // skip first number
+    for i in Range(0, _size) do
+      data.push(random.real() * max)
     end
-    result
+    this
 
-  fun transpose(): Matrix =>
-    var res = Matrix(_n, _m)
-    for i in Range(0, _n) do
-      for j in Range(0, _m) do
-        res.data.push(this(j, i))
-      end
+  fun ref initzero(): Matrix =>
+    for i in Range(0, _size) do
+      data.push(0)
     end
-    res
+    this
 
   fun copy(): Matrix =>
     var res = Matrix(_n, _m)
@@ -106,22 +95,20 @@ class Matrix
     end
     res
 
-  fun mul_transposed(yT: Matrix): Matrix =>
-    var c = Matrix(_m, yT._m)
-    var cpoint = @mtxmul(
-      this.data.cpointer(), // A
-      yT.data.cpointer(),   // B
-      _m,    // A rows
-      _n,    // A columns
-      yT._m  // B rows
-    )
-    c.data = Array[F64].from_cpointer(cpoint, yT._size)
-    c
-
-  fun ref initzero(): Matrix =>
-    for i in Range(0, _size) do
-      data.push(0)
+  fun transpose(): Matrix =>
+    var res = Matrix(_n, _m)
+    for i in Range(0, _n) do
+      for j in Range(0, _m) do
+        res.data.push(this(j, i))
+      end
     end
+    res
+
+  fun ref realign(): Matrix =>
+    data.from_cpointer(
+      @realign(data.cpointer(), _size),
+      _size
+    )
     this
 
   fun slice(from: USize, to: USize): Matrix =>
@@ -151,13 +138,36 @@ class Matrix
     end
     res
 
-  fun ref realign(): Matrix =>
-    data.from_cpointer(
-      @realign(data.cpointer(), _size),
-      _size
+  /* Multiplication functions
+   * mul_naive      -- pure Pony                                    ~0.5 GFLOPS
+   * mul_transposed -- C ABI, transposed, AVX/AVX2, cache-optimized   ~5 GFLOPS
+   * mul_actors     -- same + multithreaded            (on 2 cores)  ~10 GFLOPS
+   *
+   * By default, mul is mul_actors.
+   */
+  fun mul_naive(y: Matrix): Matrix =>
+    var result = Matrix(_m, y._n)
+    var sum: F64 = 0
+    for i in Range(0, _m) do
+      for j in Range(0, y._n) do
+        for k in Range(0, _n) do
+          sum = sum + (this(i, k) * y(k, j))
+        end
+        result.data.push(sum)
+        sum = 0
+      end
+    end
+    result
+
+  fun mul_transposed(yT: Matrix): Matrix =>
+    var c = Matrix(_m, yT._m)
+    var cpoint = @mtxmul(
+      this.data.cpointer(),
+      yT.data.cpointer(),
+      _m, _n, yT._m
     )
-    _aligned = true
-    this
+    c.data = Array[F64].from_cpointer(cpoint, yT._size)
+    c
 
   fun ref mul_actors(y: Matrix): Matrix =>
     let cores: USize = 2
@@ -206,17 +216,11 @@ class Matrix
 
     res
 
-  fun ref collection_done() =>
-    _collected = true
-
-  fun _wait_for_collection(collector: MatrixCollector, target: Matrix iso^) =>
-    while not target._collected do
-      collector.answer({()(done = target) => done.collection_done()})
-    end
-
   fun ref mul(y: Matrix): Matrix =>
-    this.mul_actors(y)
+    this.mul_transposed(y)
 
+  /* Logic functions
+   */
   fun box eq(y: Matrix box): Bool val =>
     if (this._m != y._m) or (this._n != y._n) then
       return false
@@ -233,14 +237,17 @@ class Matrix
   fun box ne(y: Matrix box): Bool val =>
     not (this == y)
 
-  fun ref test_mul(y: Matrix): Bool =>
-    this.mul_naive(y) == this.mul(y)
 
-  new from_array(arr: Array[F64], m: USize, n: USize) =>
-    data = arr
-    _m = m
-    _n = n
-    _size = m * n
+
+  /* Misc functions. They are for parallelism.
+   */
+  fun ref collection_done() =>
+    _collected = true
+
+  fun _wait_for_collection(collector: MatrixCollector, target: Matrix iso^) =>
+    while not target._collected do
+      collector.answer({()(done = target) => done.collection_done()})
+    end
 
 actor MatrixCollector
   var _workers: Array[MatrixActor] = _workers.create()
