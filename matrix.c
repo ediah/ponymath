@@ -8,6 +8,8 @@
 #include <immintrin.h>
 #endif
 
+#include "matrix.h"
+
 void debug_int(int x) {
     #ifdef DEBUG
     printf("debug\t%d\n", x);
@@ -26,23 +28,56 @@ double * realign(double * src, size_t n) {
     return dst;
 }
 
-extern double * mtxmul (double* a, double* b, int m, int n, int k)
+double * mtxmul (double* a, double* b, int m, int n, int k)
 {
-    #ifdef DEBUG
-    printf("multiplying\n");
-    #endif
     double * c = calloc(m * k, sizeof(double));
+    int block_size = LL_CACHE_SIZE / 2 / sizeof(double) / n;
+    int row = 0, col = 0;
 
+    for (row = 0; row < m; row += block_size) {
+        for (col = 0; col < k; col += block_size) {
+            mtxmul_l1(&a[row * n], &b[col * n], &c[row * k + col], m, n, k,
+                      MIN(m - row, block_size), MIN(k - col, block_size));
+        }
+    }
+
+    return c;
+}
+
+void mtxmul_l1
+(double* a, double* b, double* c, int m, int n, int k, int rblock, int cblock)
+{
+    int block_size = L1_CACHE_SIZE / 2 / sizeof(double) / n;
+    int row = 0, col = 0;
+
+    for (row = 0; row < rblock; row += block_size) {
+        for (col = 0; col < cblock; col += block_size) {
+            mtxmul_micro(&a[row * n], &b[col * n], &c[row * k + col], m, n, k,
+                         MIN(rblock - row, block_size),
+                         MIN(cblock - col, block_size));
+        }
+    }
+}
+
+inline void mtxmul_micro (
+    double* a,  // Left matrix A
+    double* b,  // Right matrix B (transposed)
+    double* c,  // Result C
+    int m,      // Rows in A
+    int n,      // Columns in A = Columns in B
+    int k,      // Rows in B = Columns in C
+    int rblock, // Size of micro core, Rows
+    int cblock  // Size of micro core, Columns
+) {
     #ifdef AVX
-    double * prod = _mm_malloc(4 * sizeof(double), 32);
-
+    double prod[4];
     const double *p1, *p2;
     __m256d v1, v2;
     int M = n - (n % 4);
     #endif
 
-    for (int i = 0; i < m; i++) {
-        for (int j = 0; j < k; j++) {
+    for (int i = 0; i < MIN(m, rblock); i++) {
+        for (int j = 0; j < MIN(k, cblock); j++) {
             c[i * k + j] = 0;
             #ifdef AVX
             p1 = &(a[i * n]);
@@ -58,7 +93,7 @@ extern double * mtxmul (double* a, double* b, int m, int n, int k)
                 p1 += 4;
                 p2 += 4;
             }
-            _mm256_store_pd(prod, v1);
+            _mm256_storeu_pd(prod, v1);
 
             for (int run = 0; run < n % 4; run++) {
                 prod[run] += a[i * n + M + run] * b[j * n + M + run];
@@ -74,14 +109,4 @@ extern double * mtxmul (double* a, double* b, int m, int n, int k)
             #endif
         }
     }
-
-    #ifdef DEBUG
-    printf("done\n");
-    #endif
-
-    #ifdef AVX
-    free(prod);
-    #endif
-
-    return c;
 }
